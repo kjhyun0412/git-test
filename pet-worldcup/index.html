@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>이상형 PET 월드컵</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="min-h-screen bg-gradient-to-b from-amber-50 to-rose-50 text-gray-800">
+  <main class="max-w-4xl mx-auto p-4 sm:p-6">
+    <h1 class="flex items-center justify-center gap-2 text-2xl sm:text-3xl font-bold text-rose-600 mb-6">
+      <i data-lucide="trophy"></i> 이상형 PET 월드컵
+    </h1>
+
+    <!-- 시작 화면 -->
+    <section id="start" class="bg-white rounded-2xl shadow p-8 text-center">
+      <p class="text-gray-600 mb-6">고양이와 강아지 중 내 이상형을 골라보세요!<br />라운드를 선택하면 바로 시작됩니다.</p>
+      <div class="flex justify-center gap-4">
+        <button data-size="8" class="start-btn px-8 py-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-lg font-bold">8강</button>
+        <button data-size="16" class="start-btn px-8 py-4 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-lg font-bold">16강</button>
+        <button data-size="32" class="start-btn px-8 py-4 rounded-xl bg-violet-500 hover:bg-violet-600 text-white text-lg font-bold">32강</button>
+      </div>
+      <p id="startError" class="mt-4 text-sm text-red-500"></p>
+    </section>
+
+    <!-- 로딩 -->
+    <section id="loading" class="hidden text-center py-20">
+      <i data-lucide="loader-2" class="w-12 h-12 mx-auto text-rose-500 animate-spin"></i>
+      <p class="mt-3 text-gray-600">후보들을 불러오는 중...</p>
+    </section>
+
+    <!-- 게임 화면 -->
+    <section id="game" class="hidden">
+      <div class="text-center mb-4">
+        <p id="roundTitle" class="text-xl font-bold text-rose-600"></p>
+        <p id="roundProgress" class="text-sm text-gray-500"></p>
+      </div>
+      <div class="grid grid-cols-2 gap-3 sm:gap-6 items-stretch">
+        <button id="cardA" class="card group relative rounded-2xl overflow-hidden bg-white shadow hover:shadow-xl hover:-translate-y-1 transition aspect-[3/4]"></button>
+        <button id="cardB" class="card group relative rounded-2xl overflow-hidden bg-white shadow hover:shadow-xl hover:-translate-y-1 transition aspect-[3/4]"></button>
+      </div>
+      <p class="text-center text-sm text-gray-400 mt-4">마음에 드는 쪽을 클릭하세요</p>
+    </section>
+
+    <!-- 결과 -->
+    <section id="result" class="hidden bg-white rounded-2xl shadow p-6 text-center">
+      <p class="text-lg text-gray-500">🏆 당신의 이상형은</p>
+      <h2 id="winnerName" class="text-2xl font-bold text-rose-600 mb-4"></h2>
+      <img id="winnerImg" class="mx-auto rounded-xl max-h-[60vh] object-contain" alt="우승" />
+      <button id="restart" class="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-full bg-rose-500 hover:bg-rose-600 text-white font-semibold">
+        <i data-lucide="rotate-ccw"></i> 다시 하기
+      </button>
+    </section>
+  </main>
+
+  <script>
+    // 연습용: API 키 하드코딩
+    const CAT_KEY = 'live_eDmdm20JfwZ6F1jCG13VXxMvVyDl9oHSoQ3tF8sK1RqLbcJ2kBBup0kiW7q1az9C';
+    const DOG_KEY = 'live_pOnZE5EscY8UbobasGQVVcuo9gtFQ0adwJG4mX539FZrz0qkDQK3ZApuZxr66bR1'; // TheDogAPI 키
+
+    const $ = (id) => document.getElementById(id);
+    const sections = ['start', 'loading', 'game', 'result'];
+    const show = (name) => sections.forEach((s) => $(s).classList.toggle('hidden', s !== name));
+
+    const shuffle = (arr) => {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    // 필요한 개수만큼 중복 없이 이미지를 모을 때까지 반복 호출
+    async function fetchPets(base, key, type, count) {
+      const got = new Map();
+      for (let tries = 0; tries < 8 && got.size < count; tries++) {
+        const res = await fetch(`${base}/images/search?limit=${count}&has_breeds=1&include_breeds=1`, {
+          headers: key ? { 'x-api-key': key } : {},
+        });
+        if (!res.ok) throw new Error(`${type} API 오류 (HTTP ${res.status})`);
+        for (const it of await res.json()) {
+          if (it.url && !got.has(it.id)) {
+            got.set(it.id, { id: it.id, url: it.url, type, name: it.breeds?.[0]?.name || (type === 'cat' ? '고양이' : '강아지') });
+          }
+        }
+      }
+      if (got.size < count) throw new Error(`${type} 이미지를 ${count}장 모으지 못했습니다`);
+      return [...got.values()].slice(0, count);
+    }
+
+    let pool = [], next = [], idx = 0, total = 0;
+
+    async function start(size) {
+      $('startError').textContent = '';
+      show('loading');
+      try {
+        const [cats, dogs] = await Promise.all([
+          fetchPets('https://api.thecatapi.com/v1', CAT_KEY, 'cat', size / 2),
+          fetchPets('https://api.thedogapi.com/v1', DOG_KEY, 'dog', size / 2),
+        ]);
+        pool = shuffle([...cats, ...dogs]);
+        total = size;
+        next = [];
+        idx = 0;
+        show('game');
+        render();
+      } catch (e) {
+        show('start');
+        $('startError').textContent = '불러오기 실패: ' + e.message;
+      }
+    }
+
+    function cardHtml(p) {
+      const badge = p.type === 'cat' ? '🐱 고양이' : '🐶 강아지';
+      return `<img src="${p.url}" alt="${p.name}" class="w-full h-full object-cover" />
+        <div class="absolute bottom-0 inset-x-0 bg-black/50 text-white py-2 text-sm sm:text-base">${badge} · ${p.name}</div>`;
+    }
+
+    function render() {
+      const round = pool.length; // 현재 라운드 참가자 수
+      $('roundTitle').textContent = round === 2 ? '결승' : `${round}강`;
+      $('roundProgress').textContent = `${idx / 2 + 1} / ${round / 2}`;
+      $('cardA').innerHTML = cardHtml(pool[idx]);
+      $('cardB').innerHTML = cardHtml(pool[idx + 1]);
+    }
+
+    function pick(offset) {
+      next.push(pool[idx + offset]);
+      idx += 2;
+      if (idx >= pool.length) {
+        if (next.length === 1) return finish(next[0]);
+        pool = next; next = []; idx = 0;
+      }
+      render();
+    }
+
+    function finish(w) {
+      $('winnerName').textContent = `${w.type === 'cat' ? '🐱' : '🐶'} ${w.name}`;
+      $('winnerImg').src = w.url;
+      show('result');
+    }
+
+    document.querySelectorAll('.start-btn').forEach((b) => b.addEventListener('click', () => start(+b.dataset.size)));
+    $('cardA').addEventListener('click', () => pick(0));
+    $('cardB').addEventListener('click', () => pick(1));
+    $('restart').addEventListener('click', () => show('start'));
+    lucide.createIcons();
+  </script>
+</body>
+</html>
